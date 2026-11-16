@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Student Record Management System</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js"></script>
+<style>
+  *{box-sizing:border-box}
+  body{font-family:Inter,"Segoe UI",Arial,sans-serif;margin:0;background:#f3f6fb;color:#0f172a;padding:16px}
+  .wrap{max-width:900px;margin:0 auto}
+  h1{text-align:center;font-size:26px;margin:8px 0 18px}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:16px}
+  .card{background:#fff;border-radius:14px;padding:16px 10px;text-align:center;box-shadow:0 2px 8px rgba(15,23,42,.07)}
+  .card small{display:block;font-size:12px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.3px}
+  .card b{display:block;font-size:28px;color:#2563eb;margin-top:8px}
+  .panel{background:#fff;border-radius:14px;padding:20px;margin-bottom:16px;box-shadow:0 2px 8px rgba(15,23,42,.07)}
+  h2{margin:0 0 14px;font-size:20px}
+  input,select{width:100%;padding:13px 14px;margin-bottom:12px;border:1px solid #cbd5e1;border-radius:8px;font-size:16px;font-family:inherit;background:#fff}
+  select{background:#f1f5f9}
+  input[readonly]{background:#e2e8f0}
+  button{font-family:inherit;border:0;border-radius:8px;cursor:pointer;font-weight:600}
+  .main-btn{width:100%;padding:14px;background:#2563eb;color:#fff;font-size:17px}
+  .cancel-btn{width:100%;padding:12px;background:#64748b;color:#fff;font-size:15px;margin-top:8px;display:none}
+  #msg{margin-top:10px;font-size:14px;min-height:18px}
+  .tablewrap{overflow-x:auto}
+  table{width:100%;border-collapse:collapse;font-size:15px}
+  th{background:#f8fafc;text-align:left;padding:12px 10px;border-bottom:2px solid #e2e8f0;white-space:nowrap}
+  td{padding:12px 10px;border-bottom:1px solid #e2e8f0}
+  td.nw{white-space:nowrap}
+  .edit{background:#dbeafe;color:#1d4ed8;padding:6px 12px;font-size:13px;margin-right:4px}
+  .del{background:#fee2e2;color:#b91c1c;padding:6px 12px;font-size:13px}
+  .empty{text-align:center;color:#64748b;padding:20px}
+  details{margin-top:14px}
+  summary{cursor:pointer;font-weight:600;font-size:14px;color:#334155}
+  pre{background:#0f172a;color:#86efac;padding:12px;border-radius:8px;font-size:12px;overflow-x:auto;margin:8px 0 0}
+  .dsum td,.dsum th{font-size:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🎓 Student Record Management System</h1>
+
+  <div class="cards">
+    <div class="card"><small>Total Students</small><b id="sCount">-</b></div>
+    <div class="card"><small>Average CGPA</small><b id="sAvg">-</b></div>
+    <div class="card"><small>Highest CGPA</small><b id="sMax">-</b></div>
+    <div class="card"><small>Lowest CGPA</small><b id="sMin">-</b></div>
+  </div>
+
+  <div class="panel">
+    <h2 id="formTitle">Add New Student</h2>
+    <input id="sid" placeholder="Student ID (e.g. 2024-1-60-011)">
+    <input id="name" placeholder="Full Name">
+    <input id="email" type="email" placeholder="Email Address">
+    <select id="dept"></select>
+    <input id="cgpa" type="number" step="0.01" min="0" max="4" placeholder="CGPA (0.00 - 4.00)">
+    <input id="year" type="number" min="2000" max="2100" placeholder="Year (e.g. 2024)">
+    <button class="main-btn" id="saveBtn" onclick="saveStudent()">Add Student</button>
+    <button class="cancel-btn" id="cancelBtn" onclick="resetForm()">Cancel Edit</button>
+    <div id="msg"></div>
+  </div>
+
+  <div class="panel">
+    <input id="search" placeholder="🔍 Search by Student ID, Name, or Department..." oninput="loadStudents()" style="margin-bottom:14px">
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>ID</th><th>Name</th><th>Email</th><th>Department</th><th>CGPA</th><th>Year</th><th>Action</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Department Summary</h2>
+    <div class="tablewrap">
+      <table class="dsum"><thead><tr><th>Department</th><th>Students</th><th>Avg CGPA</th></tr></thead><tbody id="deptSummary"></tbody></table>
+    </div>
+    <details>
+      <summary>Show last SQL query executed</summary>
+      <pre id="lastSql">-- waiting...</pre>
+    </details>
+  </div>
+</div>
+
+<script>
+let db, editingId = null;
+const LS_KEY = "student_db_v2";
+
+const SETUP = `
+CREATE TABLE department (
+  dept_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+  dept_name TEXT NOT NULL UNIQUE
+);
+CREATE TABLE student (
+  student_id TEXT PRIMARY KEY,
+  name       TEXT NOT NULL,
+  email      TEXT,
+  dept_id    INTEGER NOT NULL,
+  cgpa       REAL CHECK (cgpa BETWEEN 0 AND 4),
+  year       INTEGER,
+  FOREIGN KEY (dept_id) REFERENCES department(dept_id)
+);
+INSERT INTO department (dept_name) VALUES
+('Computer Science & Engineering'),('Electrical & Electronic Engineering'),
+('Business Administration'),('English'),('Civil Engineering');
+INSERT INTO student (student_id,name,email,dept_id,cgpa,year) VALUES
+('2023-1-60-001','Arafat Rahman','arafat@example.edu',1,3.85,2023),
+('2023-1-60-002','Nusrat Jahan','nusrat@example.edu',1,3.95,2023),
+('2023-1-60-003','Imran Hossain','imran@example.edu',1,3.20,2023),
+('2022-1-55-004','Tanvir Ahmed','tanvir@example.edu',2,2.85,2022),
+('2024-1-55-005','Sadia Islam','sadia@example.edu',2,3.45,2024),
+('2023-1-10-006','Sabrina Akter','sabrina@example.edu',3,3.60,2023),
+('2021-1-10-007','Mahmud Hasan','mahmud@example.edu',3,3.10,2021),
+('2024-1-30-008','Ayesha Siddika','ayesha@example.edu',4,3.50,2024),
+('2022-1-30-009','Kamal Hossain','kamal@example.edu',4,2.40,2022),
+('2023-1-40-010','Shamim Reza','shamim@example.edu',5,3.75,2023),
+('2021-1-40-011','Mitu Rani','mitu@example.edu',5,3.35,2021),
+('2024-1-60-012','Rafi Chowdhury','rafi@example.edu',1,3.55,2024);
+`;
+
+const $ = id => document.getElementById(id);
+const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const show = s => $("lastSql").textContent = s.trim();
+
+function query(sql, params=[]) {
+  const st = db.prepare(sql); st.bind(params);
+  const out = []; while (st.step()) out.push(st.getAsObject());
+  st.free(); return out;
+}
+
+function persist() {
+  try {
+    const d = db.export(); let b = "";
+    for (let i = 0; i < d.length; i++) b += String.fromCharCode(d[i]);
+    localStorage.setItem(LS_KEY, btoa(b));
+  } catch (e) {}
+}
+function restore() {
+  try {
+    const s = localStorage.getItem(LS_KEY); if (!s) return null;
+    const b = atob(s), a = new Uint8Array(b.length);
+    for (let i = 0; i < b.length; i++) a[i] = b.charCodeAt(i);
+    return a;
+  } catch (e) { return null; }
+}
+
+async function init() {
+  const SQL = await initSqlJs({ locateFile: f => "https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/" + f });
+  const saved = restore();
+  if (saved) db = new SQL.Database(saved);
+  else { db = new SQL.Database(); db.run(SETUP); persist(); }
+  db.run("PRAGMA foreign_keys = ON;");
+  const depts = query("SELECT dept_id, dept_name FROM department ORDER BY dept_id;");
+  $("dept").innerHTML = depts.map(d => `<option value="${d.dept_id}">${esc(d.dept_name)}</option>`).join("");
+  loadStudents(); loadSummary();
+}
+
+function loadStudents() {
+  const q = $("search").value.trim();
+  let sql = `SELECT s.student_id, s.name, s.email, d.dept_name, s.cgpa, s.year
+FROM student s JOIN department d ON s.dept_id = d.dept_id`;
+  const p = [];
+  if (q) {
+    sql += `\nWHERE s.student_id LIKE ? OR s.name LIKE ? OR d.dept_name LIKE ?`;
+    p.push("%"+q+"%", "%"+q+"%", "%"+q+"%");
+  }
+  sql += `\nORDER BY s.student_id;`;
+  const rows = query(sql, p);
+  show(sql + (p.length ? "\n-- params: " + JSON.stringify(p) : ""));
+  $("rows").innerHTML = rows.length ? rows.map(r => `
+    <tr>
+      <td class="nw">${esc(r.student_id)}</td><td>${esc(r.name)}</td><td>${esc(r.email)}</td>
+      <td>${esc(r.dept_name)}</td><td>${Number(r.cgpa).toFixed(2)}</td><td>${r.year}</td>
+      <td class="nw"><button class="edit" data-id="${esc(r.student_id)}" onclick="editStudent(this.dataset.id)">Edit</button>
+      <button class="del" data-id="${esc(r.student_id)}" onclick="deleteStudent(this.dataset.id)">Delete</button></td>
+    </tr>`).join("") : `<tr><td colspan="7" class="empty">No records found</td></tr>`;
+}
+
+function loadSummary() {
+  const a = query("SELECT COUNT(*) AS c, AVG(cgpa) AS a, MAX(cgpa) AS mx, MIN(cgpa) AS mn FROM student;")[0];
+  $("sCount").textContent = a.c;
+  $("sAvg").textContent = a.a == null ? "-" : a.a.toFixed(2);
+  $("sMax").textContent = a.mx == null ? "-" : a.mx.toFixed(2);
+  $("sMin").textContent = a.mn == null ? "-" : a.mn.toFixed(2);
+  const g = query(`SELECT d.dept_name, COUNT(s.student_id) AS cnt, AVG(s.cgpa) AS av
+FROM department d LEFT JOIN student s ON s.dept_id = d.dept_id
+GROUP BY d.dept_name ORDER BY d.dept_name;`);
+  $("deptSummary").innerHTML = g.map(r => `<tr><td>${esc(r.dept_name)}</td><td>${r.cnt}</td><td>${r.av == null ? "-" : r.av.toFixed(2)}</td></tr>`).join("");
+}
+
+function msg(t, ok=true) { $("msg").textContent = t; $("msg").style.color = ok ? "#15803d" : "#b91c1c"; }
+
+function saveStudent() {
+  const sid = $("sid").value.trim(), name = $("name").value.trim(), email = $("email").value.trim();
+  const dept = Number($("dept").value), cgpa = parseFloat($("cgpa").value), year = parseInt($("year").value);
+  if (!sid || !name) return msg("Student ID and Full Name are required.", false);
+  if (isNaN(cgpa) || cgpa < 0 || cgpa > 4) return msg("CGPA must be between 0.00 and 4.00.", false);
+  if (isNaN(year)) return msg("Please enter a valid year.", false);
+  try {
+    let sql;
+    if (editingId) {
+      sql = `UPDATE student SET name=?, email=?, dept_id=?, cgpa=?, year=? WHERE student_id=?;`;
+      db.run(sql, [name, email, dept, cgpa, year, editingId]);
+      msg("Student updated successfully.");
+    } else {
+      sql = `INSERT INTO student (student_id,name,email,dept_id,cgpa,year) VALUES (?,?,?,?,?,?);`;
+      db.run(sql, [sid, name, email, dept, cgpa, year]);
+      msg("Student added successfully.");
+    }
+    show(sql); persist(); resetForm(false); loadStudents(); loadSummary();
+  } catch (e) {
+    msg(e.message.includes("UNIQUE") || e.message.includes("PRIMARY") ? "This Student ID already exists." : "Error: " + e.message, false);
+  }
+}
+
+function editStudent(id) {
+  const sql = "SELECT * FROM student WHERE student_id = ?;";
+  const r = query(sql, [id])[0]; show(sql + "\n-- params: " + JSON.stringify([id]));
+  if (!r) return;
+  editingId = r.student_id;
+  $("sid").value = r.student_id; $("sid").readOnly = true;
+  $("name").value = r.name; $("email").value = r.email || "";
+  $("dept").value = r.dept_id; $("cgpa").value = r.cgpa; $("year").value = r.year;
+  $("formTitle").textContent = "Edit Student";
+  $("saveBtn").textContent = "Update Student";
+  $("cancelBtn").style.display = "block";
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function deleteStudent(id) {
+  const r = query("SELECT name FROM student WHERE student_id = ?;", [id])[0];
+  if (!r) return;
+  if (!confirm(`Are you sure you want to delete "${r.name}"?`)) return;
+  const sql = "DELETE FROM student WHERE student_id = ?;";
+  db.run(sql, [id]); show(sql + "\n-- params: " + JSON.stringify([id]));
+  persist(); msg("Student deleted."); loadStudents(); loadSummary();
+}
+
+function resetForm(clr=true) {
+  editingId = null;
+  ["sid","name","email","cgpa","year"].forEach(i => $(i).value = "");
+  $("sid").readOnly = false; $("dept").selectedIndex = 0;
+  $("formTitle").textContent = "Add New Student";
+  $("saveBtn").textContent = "Add Student";
+  $("cancelBtn").style.display = "none";
+  if (clr) msg("");
+}
+
+init().catch(e => { $("lastSql").textContent = "Failed to load database engine: " + e.message; msg("Could not load database. Check internet connection.", false); });
+</script>
+</body>
+</html>
